@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"flag"
 	"io"
 	"io/ioutil"
 	"log"
@@ -11,11 +12,27 @@ import (
 )
 
 func main() {
-	archName := "arch1.zip"
-	mypath := "C:/Users/admin/Desktop/pr"
-	err := createSZP(mypath, archName)
-	if err != nil {
-		log.Fatal(err)
+	var mode string
+	var path string
+	var name string
+	flag.StringVar(&name, "name", "", "Name your archive")
+	flag.StringVar(&mode, "mode", "", "Choose mode: z - zip file(s), i - get information about zipped files and x - extract zipped files")
+	flag.StringVar(&path, "path", "", "Locate your file or your directoty")
+	flag.Parse()
+
+	//mypath := "C:/Users/admin/Desktop/pr"
+	name = name + ".zip"
+	switch mode {
+	case "z":
+		err := createSZP(path, name)
+		if err != nil {
+			log.Fatal(err)
+		}
+	case "i":
+		log.Println("Info!")
+
+	case "x":
+		log.Println("Haven't done yet!")
 	}
 }
 
@@ -53,6 +70,8 @@ func getFiles(path, oldpath, oldNewPath string, zipWriter *zip.Writer) error {
 	for i := range files {
 		if files[i].IsDir() {
 			path = filepath.Join(oldpath, files[i].Name())
+			// newPath - сокращенный путь к файлу для создания файловой системы внутри каталога,
+			// в newPath содержится путь, начиная с требуемого каталога, а не с диска
 			newPath := filepath.Join(oldNewPath, files[i].Name())
 			err = getFiles(path, oldpath, newPath, zipWriter)
 			if err != nil {
