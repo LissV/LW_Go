@@ -3,13 +3,24 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 )
+
+type fileInfo struct {
+	filename  string    `json:"Name"`
+	origsize  int64     `json:"Original_size"`
+	lastModif time.Time `json:"Last_modification_time"`
+}
+
+var metArray = make([]fileInfo, 0)
 
 func main() {
 	var mode string
@@ -48,13 +59,25 @@ func createSZP(srcpath, archivename string) error {
 		return err
 	}
 
-	err = zipWriter.Close()
+	var zippedFiles []byte
+
+	err = zipData(zipWriter, &zippedFiles, buf)
 	if err != nil {
 		return err
 	}
 
-	data := buf.Bytes()
-	err = ioutil.WriteFile(archivename, data, 777)
+	finalZippedDataWriter := new(bytes.Buffer)
+	err = getZippedMetadata(finalZippedDataWriter)
+	if err != nil {
+		return err
+	}
+
+	err = binary.Write(finalZippedDataWriter, binary.LittleEndian, zippedFiles)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(archivename, zippedFiles, 777)
 	if err != nil {
 		return err
 	}
@@ -80,6 +103,7 @@ func getFiles(path, oldpath, oldNewPath string, zipWriter *zip.Writer) error {
 		} else {
 			path = filepath.Join(oldpath, files[i].Name())
 			newPath := filepath.Join(oldNewPath, files[i].Name())
+			addMeta(files[i], &metArray, newPath)
 			err = prepareFile(path, zipWriter, newPath)
 			if err != nil {
 				return err
@@ -106,7 +130,7 @@ func prepareFile(file string, zipWriter *zip.Writer, newPath string) error {
 	return err
 }
 
-func packageFile(path string, fileReader *os.File, zipWriter *zip.Writer) error {
+func packageFile(path string, fileReader io.Reader, zipWriter *zip.Writer) error {
 	zipFile, err := zipWriter.Create(path)
 	if err != nil {
 		return err
@@ -116,5 +140,72 @@ func packageFile(path string, fileReader *os.File, zipWriter *zip.Writer) error 
 	if err != nil {
 		return err
 	}
+	return err
+}
+
+func addMeta(info os.FileInfo, metaData *[]fileInfo, path string) {
+	meta := &fileInfo{
+		filename:  path,
+		origsize:  info.Size(),
+		lastModif: info.ModTime()}
+	*metaData = append(*metaData, *meta)
+}
+
+func metaToJSON(meta []fileInfo) (metaJS []byte, err error) {
+	return json.Marshal(meta)
+}
+
+func zipData(zipWriter *zip.Writer, data *[]byte, dataWriter *bytes.Buffer) error {
+	err := zipWriter.Close()
+	if err != nil {
+		return err
+	}
+
+	*data = dataWriter.Bytes()
+	return err
+}
+
+func getZippedMetadata(finalZippedDataWriter io.Writer) error {
+	metaJS, err := metaToJSON(metArray)
+	if err != nil {
+		return err
+	}
+
+	var zippedMeta []byte
+	metaBuf := new(bytes.Buffer)
+	metaWriter := zip.NewWriter(metaBuf)
+
+	err = packageFile("metadata.json", bytes.NewReader(metaJS), metaWriter)
+	if err != nil {
+		return err
+	}
+
+	err = zipData(metaWriter, &zippedMeta, metaBuf)
+	if err != nil {
+		return err
+	}
+
+	err = getMetaLenInBytes(zippedMeta, finalZippedDataWriter)
+	if err != nil {
+		return err
+	}
+
+	err = binary.Write(finalZippedDataWriter, binary.LittleEndian, zippedMeta)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func getMetaLenInBytes(meta []byte, finalZippedDataWriter io.Writer) error {
+	meta4Bytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(meta4Bytes, uint32(len(meta)))
+
+	err := binary.Write(finalZippedDataWriter, binary.LittleEndian, meta4Bytes)
+	if err != nil {
+		return err
+	}
+
 	return err
 }
